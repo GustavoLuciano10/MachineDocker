@@ -1,59 +1,68 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:99
 
 RUN apt-get update && apt-get install -y \
-    apt-transport-https \
-    ca-certificates \
+    git \
     curl \
-    gnupg2 \
-    software-properties-common \
-    iproute2 \
-    net-tools \
-    openjdk-8-jdk-headless \
-    supervisor \
     wget \
-    unzip \
-    sudo \
-    && rm -rf /var/lib/apt/lists/*
-
-# Instala Docker (Docker-in-Docker)
-RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - && \
-    add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable" && \
-    apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io && \
-    rm -rf /var/lib/apt/lists/*
-
-# Instala dependências para Android (simplificado)
-RUN apt-get update && apt-get install -y \
-    dbus-x11 \
-    xvfb \
     x11vnc \
-    fluxbox \
-    && rm -rf /var/lib/apt/lists/*
+    xvfb \
+    supervisor \
+    net-tools \
+    python3 \
+    python3-pip \
+    openjdk-11-jdk \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Configura supervisord.conf embutido
-RUN echo "[supervisord]" > /etc/supervisor/conf.d/supervisord.conf && \
-    echo "nodaemon=true" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "[program:docker]" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "command=/usr/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "priority=10" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "autostart=true" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "autorestart=true" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "stderr_logfile=/var/log/docker.err.log" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "stdout_logfile=/var/log/docker.out.log" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "[program:android]" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "command=/bin/bash -c \"/start-android.sh\"" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "priority=20" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "autostart=true" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "autorestart=true" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "stderr_logfile=/var/log/android.err.log" >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo "stdout_logfile=/var/log/android.out.log" >> /etc/supervisor/conf.d/supervisord.conf
+RUN pip3 install websockify
 
-# Expor portas (modifique conforme sua necessidade)
-EXPOSE 6080 5554 5555 2375
+# Clonar o docker-android
+RUN git clone https://github.com/budtmo/docker-android.git /opt/docker-android
 
-# Você precisa criar o /start-android.sh (copiar ou criar via RUN) que inicializa o Android
+# Criar script start-android.sh
+RUN printf '#!/bin/bash\n\
+set -e\n\
+export DISPLAY=:99\n\
+sleep 5\n\
+# Aqui você deve iniciar o Android emulator (exemplo do repo original)\n\
+# /opt/docker-android/entrypoint.sh &\n\
+while true; do sleep 1000; done\n' > /opt/start-android.sh && chmod +x /opt/start-android.sh
+
+# Criar script launch_novnc.sh
+RUN printf '#!/bin/bash\n\
+set -e\n\
+export DISPLAY=:99\n\
+websockify --web=/opt/docker-android/utils/novnc 6080 localhost:5900\n' > /opt/launch_novnc.sh && chmod +x /opt/launch_novnc.sh
+
+# Criar arquivo de configuração do supervisord
+RUN printf '[supervisord]\n\
+nodaemon=true\n\
+logfile=/var/log/supervisord.log\n\
+loglevel=info\n\
+\n\
+[program:xvfb]\n\
+command=Xvfb :99 -screen 0 1024x768x16\n\
+autostart=true\n\
+autorestart=true\n\
+stdout_logfile=/var/log/xvfb.log\n\
+stderr_logfile=/var/log/xvfb.err\n\
+\n\
+[program:android]\n\
+command=/opt/start-android.sh\n\
+autostart=true\n\
+autorestart=true\n\
+stdout_logfile=/var/log/android.log\n\
+stderr_logfile=/var/log/android.err\n\
+\n\
+[program:novnc]\n\
+command=/opt/launch_novnc.sh\n\
+autostart=true\n\
+autorestart=true\n\
+stdout_logfile=/var/log/novnc.log\n\
+stderr_logfile=/var/log/novnc.err\n' > /etc/supervisor/conf.d/supervisord.conf
+
+EXPOSE 6080 5554 5555
 
 CMD ["/usr/bin/supervisord", "-n"]
