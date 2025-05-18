@@ -1,62 +1,74 @@
-# Base image
-FROM ubuntu:22.04
+FROM ubuntu:20.04
 
-# Variáveis para não interagir durante build
-ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=America/Sao_Paulo
-
-# Atualiza e instala dependências
-RUN apt-get update && apt-get install -y \
-    wget curl unzip git gnupg2 ca-certificates \
-    openjdk-11-jdk \
-    xvfb x11vnc supervisor novnc python3 python3-pip \
-    net-tools libvirt-daemon-system libvirt-clients qemu-kvm \
-    && rm -rf /var/lib/apt/lists/*
-
-# Instala o Android SDK Command Line Tools
+ENV DEBIAN_FRONTEND=noninteractive
 ENV ANDROID_SDK_ROOT=/opt/android-sdk
-RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools \
- && cd ${ANDROID_SDK_ROOT}/cmdline-tools \
- && wget https://dl.google.com/android/repository/commandlinetools-linux-10406996_latest.zip -O sdk.zip \
- && unzip sdk.zip -d tools \
- && rm sdk.zip
 
+# Instala dependências do sistema
+RUN apt-get update && apt-get install -y \
+    wget curl unzip git openjdk-11-jdk \
+    libglu1-mesa xvfb x11vnc net-tools supervisor \
+    novnc websockify xterm python3-pip tzdata \
+    && apt-get clean
+
+# Define timezone automaticamente
+RUN ln -fs /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime && \
+    dpkg-reconfigure -f noninteractive tzdata
+
+# Cria diretórios
+RUN mkdir -p /opt/android-sdk/cmdline-tools && \
+    mkdir -p /var/log/supervisor
+
+# Instala Command Line Tools do Android SDK
+WORKDIR /opt/android-sdk/cmdline-tools
+RUN wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip && \
+    unzip cmdline-tools.zip && rm cmdline-tools.zip && \
+    mv cmdline-tools tools
+
+# Define o PATH
 ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/tools/bin:${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
 
-# Aceita licenças e instala componentes
-RUN yes | sdkmanager --sdk_root=${ANDROID_SDK_ROOT} --licenses \
- && sdkmanager --sdk_root=${ANDROID_SDK_ROOT} "platform-tools" "platforms;android-30" "emulator" "system-images;android-30;google_apis;x86_64" "build-tools;30.0.3"
+# Aceita licenças e instala componentes necessários
+RUN yes | /opt/android-sdk/cmdline-tools/tools/bin/sdkmanager --sdk_root=${ANDROID_SDK_ROOT} --licenses && \
+    /opt/android-sdk/cmdline-tools/tools/bin/sdkmanager --sdk_root=${ANDROID_SDK_ROOT} \
+    "platform-tools" \
+    "platforms;android-30" \
+    "emulator" \
+    "system-images;android-30;google_apis;x86_64" \
+    "build-tools;30.0.3"
 
-# Cria o AVD
-RUN echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" --force
+# Instala emulador
+RUN echo "no" | /opt/android-sdk/cmdline-tools/tools/bin/avdmanager create avd \
+    -n test -k "system-images;android-30;google_apis;x86_64" --device "pixel"
 
-# Copia o arquivo de configuração do supervisord
-RUN mkdir -p /etc/supervisor/conf.d
+# Cria script de entrada para iniciar o emulador
+RUN echo '#!/bin/bash\n'\
+'xvfb-run --server-args="-screen 0 1920x1080x24" nohup emulator -avd test -no-audio -no-boot-anim -accel off -no-snapshot &\n'\
+'exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
-# Embute o supervisord.conf via HEREDOC
-RUN tee /etc/supervisor/conf.d/supervisord.conf > /dev/null <<EOF
-[supervisord]
-nodaemon=true
+# Configuração do supervisord
+RUN echo '[supervisord]\n\
+nodaemon=true\n\
+\n\
+[program:xvfb]\n\
+command=/usr/bin/Xvfb :0 -screen 0 1024x768x24\n\
+autostart=true\n\
+autorestart=true\n\
+\n\
+[program:x11vnc]\n\
+command=/usr/bin/x11vnc -forever -usepw -create\n\
+autostart=true\n\
+autorestart=true\n\
+\n\
+[program:novnc]\n\
+command=/usr/share/novnc/utils/launch.sh --vnc localhost:5900\n\
+autostart=true\n\
+autorestart=true\n\
+\n\
+[program:emulator]\n\
+command=/entrypoint.sh\n\
+autostart=true\n\
+autorestart=true\n' > /etc/supervisord.conf
 
-[program:xvfb]
-command=/usr/bin/Xvfb :0 -screen 0 1024x768x16
-autorestart=true
+EXPOSE 6080 5900
 
-[program:x11vnc]
-command=/usr/bin/x11vnc -display :0 -nopw -forever
-autorestart=true
-
-[program:novnc]
-command=/usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080
-autorestart=true
-
-[program:android]
-command=/opt/android-sdk/emulator/emulator -avd test -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -verbose -no-window -qemu -vnc :0
-autorestart=true
-EOF
-
-# Expõe as portas do VNC e noVNC
-EXPOSE 5900 6080
-
-# Define o entrypoint do supervisord
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
