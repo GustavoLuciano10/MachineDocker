@@ -1,8 +1,5 @@
 FROM ubuntu:20.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Atualizar e instalar pacotes necessários
 RUN apt-get update && \
     apt-get install -y software-properties-common && \
     add-apt-repository universe && \
@@ -11,11 +8,10 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Habilitar módulos do Apache para proxy reverso
 RUN a2enmod proxy proxy_http rewrite headers
 
 # Criar arquivo de configuração do Apache para proxy reverso do shellinabox
-RUN cat << EOF > /etc/apache2/sites-available/000-default.conf
+RUN cat << EOF > /etc/apache2/sites-available/000-default.conf \
 <VirtualHost *:80>
     ServerAdmin webmaster@localhost
 
@@ -29,13 +25,11 @@ RUN cat << EOF > /etc/apache2/sites-available/000-default.conf
     RewriteCond %{REQUEST_URI} ^/shellinabox/(.*)$
     RewriteRule ^/shellinabox/(.*)$ /$1 [P,L]
 
-    ErrorLog \${APACHE_LOG_DIR}/error.log
-    CustomLog \${APACHE_LOG_DIR}/access.log combined
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
 </VirtualHost>
 EOF
 
-# Expor porta 80
 EXPOSE 80
 
-# Iniciar serviços shellinabox e apache2 no container
-CMD service shellinabox start && apachectl -D FOREGROUND
+CMD ["apachectl", "-D", "FOREGROUND"]
