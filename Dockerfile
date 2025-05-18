@@ -2,25 +2,21 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Instala dependências para compilar e rodar shellinabox + apache
 RUN apt-get update && apt-get install -y \
-    git build-essential cmake pkg-config libssl-dev libpam0g-dev libprotobuf-dev protobuf-compiler apache2 \
+    git build-essential autoconf automake libtool pkg-config libssl-dev libpam0g-dev apache2 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Clona e compila shellinabox (versão atual do GitHub)
 RUN git clone https://github.com/shellinabox/shellinabox.git /tmp/shellinabox && \
     cd /tmp/shellinabox && \
-    mkdir build && cd build && \
-    cmake .. && make && make install && \
+    ./autogen.sh && \
+    ./configure && \
+    make && \
+    make install && \
     rm -rf /tmp/shellinabox
 
-# Habilita módulos apache necessários
 RUN a2enmod proxy proxy_http rewrite headers
-
-# Define ServerName para evitar warnings
 RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
-# Configura Apache para proxy reverso shellinabox
 RUN echo '<VirtualHost *:80>' > /etc/apache2/sites-available/000-default.conf && \
     echo '    ServerAdmin webmaster@localhost' >> /etc/apache2/sites-available/000-default.conf && \
     echo '    ProxyRequests Off' >> /etc/apache2/sites-available/000-default.conf && \
