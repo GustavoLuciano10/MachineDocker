@@ -1,25 +1,21 @@
 FROM ubuntu:20.04
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update && apt-get install -y software-properties-common && \
     add-apt-repository universe && apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    shellinabox \
-    apache2 \
-    libapache2-mod-proxy-html \
-    libxml2-dev && \
+    apt-get install -y \
+        shellinabox \
+        apache2 \
+        libapache2-mod-proxy-html2 \
+        libxml2-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-RUN echo 'root:root' | chpasswd
+# Ativa módulos do Apache necessários
+RUN a2enmod proxy proxy_http proxy_html rewrite headers
 
-RUN a2enmod proxy proxy_http
+# Exemplo simples para habilitar shellinabox na porta 4200
+EXPOSE 4200
 
-RUN echo '<VirtualHost *:80>\n\
-    ProxyPreserveHost On\n\
-    ProxyPass /shell http://localhost:4200/\n\
-    ProxyPassReverse /shell http://localhost:4200/\n\
-</VirtualHost>' > /etc/apache2/sites-available/000-default.conf
-
-EXPOSE 80
-
-CMD service shellinabox start && apachectl -D FOREGROUND
+CMD service apache2 start && shellinaboxd -t -p 4200 && tail -f /dev/null
