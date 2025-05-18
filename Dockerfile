@@ -1,44 +1,41 @@
+# Base image
 FROM ubuntu:22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Variáveis para não interagir durante build
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=America/Sao_Paulo
 
-# Definindo timezone automaticamente
-RUN ln -fs /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime && \
-    echo "America/Sao_Paulo" > /etc/timezone && \
-    apt-get update && \
-    apt-get install -y tzdata && \
-    apt-get install -y \
-        openjdk-11-jdk wget unzip curl git \
-        x11vnc xvfb supervisor novnc net-tools python3-pip \
-        libgl1-mesa-dev libglu1-mesa && \
-    rm -rf /var/lib/apt/lists/*
+# Atualiza e instala dependências
+RUN apt-get update && apt-get install -y \
+    wget curl unzip git gnupg2 ca-certificates \
+    openjdk-11-jdk \
+    xvfb x11vnc supervisor novnc python3 python3-pip \
+    net-tools libvirt-daemon-system libvirt-clients qemu-kvm \
+    && rm -rf /var/lib/apt/lists/*
 
-# Criar diretórios necessários
-RUN mkdir -p /root/.android && \
-    mkdir -p /opt/android-sdk && \
-    mkdir -p /var/log/supervisor
+# Instala o Android SDK Command Line Tools
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools \
+ && cd ${ANDROID_SDK_ROOT}/cmdline-tools \
+ && wget https://dl.google.com/android/repository/commandlinetools-linux-10406996_latest.zip -O sdk.zip \
+ && unzip sdk.zip -d tools \
+ && rm sdk.zip
 
-# Baixar SDK Tools
-RUN wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O sdk-tools.zip && \
-    unzip sdk-tools.zip -d /opt/android-sdk/cmdline-tools && \
-    mv /opt/android-sdk/cmdline-tools/cmdline-tools /opt/android-sdk/cmdline-tools/latest && \
-    rm sdk-tools.zip
+ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/tools/bin:${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
 
-# Configurar variáveis de ambiente
-ENV ANDROID_HOME=/opt/android-sdk
-ENV PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$ANDROID_HOME/tools:$ANDROID_HOME/tools/bin
+# Aceita licenças e instala componentes
+RUN yes | sdkmanager --sdk_root=${ANDROID_SDK_ROOT} --licenses \
+ && sdkmanager --sdk_root=${ANDROID_SDK_ROOT} "platform-tools" "platforms;android-30" "emulator" "system-images;android-30;google_apis;x86_64" "build-tools;30.0.3"
 
-# Instalar SDKs e ferramentas necessárias
-RUN yes | sdkmanager --sdk_root=${ANDROID_HOME} --licenses && \
-    sdkmanager --sdk_root=${ANDROID_HOME} \
-        "platform-tools" \
-        "emulator" \
-        "platforms;android-30" \
-        "system-images;android-30;google_apis;x86_64" && \
-    echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" --force
+# Cria o AVD
+RUN echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" --force
 
-# Supervisord.conf embutido via HEREDOC
-RUN echo '[supervisord]
+# Copia o arquivo de configuração do supervisord
+RUN mkdir -p /etc/supervisor/conf.d
+
+# Embute o supervisord.conf via HEREDOC
+RUN tee /etc/supervisor/conf.d/supervisord.conf > /dev/null <<EOF
+[supervisord]
 nodaemon=true
 
 [program:xvfb]
@@ -56,8 +53,10 @@ autorestart=true
 [program:android]
 command=/opt/android-sdk/emulator/emulator -avd test -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -verbose -no-window -qemu -vnc :0
 autorestart=true
-' > /etc/supervisor/conf.d/supervisord.conf
+EOF
 
-EXPOSE 6080
+# Expõe as portas do VNC e noVNC
+EXPOSE 5900 6080
 
+# Define o entrypoint do supervisord
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
