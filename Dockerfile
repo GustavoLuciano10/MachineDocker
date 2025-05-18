@@ -1,65 +1,55 @@
 FROM ubuntu:22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV DISPLAY=:99
-
-# Instala dependências básicas e supervisor, xvfb, x11vnc, java etc.
+# 1. Instala dependências necessárias
 RUN apt-get update && apt-get install -y \
-    wget \
-    git \
-    curl \
-    supervisor \
-    xvfb \
-    x11vnc \
-    python3-pip \
-    openjdk-11-jdk \
-    libglu1-mesa \
-    xterm \
+    openjdk-11-jdk wget unzip git curl \
+    x11vnc xvfb supervisor \
+    libgl1-mesa-dev libglu1-mesa \
+    novnc net-tools python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala websockify via pip
-RUN pip3 install websockify
+# 2. Define variáveis de ambiente
+ENV ANDROID_HOME=/opt/android-sdk
+ENV PATH=$PATH:$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator
 
-# Clona o repositório docker-android para /opt/docker-android
-RUN git clone https://github.com/budtmo/docker-android.git /opt/docker-android
+# 3. Instala SDK e cria o AVD
+RUN mkdir -p $ANDROID_HOME && cd $ANDROID_HOME && \
+    wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip && \
+    unzip commandlinetools-linux-*.zip -d cmdline-tools && \
+    mv cmdline-tools cmdline-tools/tools && \
+    yes | cmdline-tools/tools/bin/sdkmanager --licenses && \
+    cmdline-tools/tools/bin/sdkmanager "platform-tools" "emulator" "platforms;android-30" "system-images;android-30;default;x86_64" && \
+    echo "no" | cmdline-tools/tools/bin/avdmanager create avd -n test -k "system-images;android-30;default;x86_64" --force
 
-# Cria o arquivo de configuração do supervisor com heredoc para evitar erro de quebra de linha
-RUN mkdir -p /etc/supervisor/conf.d/ && \
-    cat <<EOF > /etc/supervisor/conf.d/supervisord.conf
-[supervisord]
-nodaemon=true
+# 4. Cria o supervisord.conf embutido
+RUN echo "[supervisord]\n\
+nodaemon=true\n\
+user=root\n\
+\n\
+[program:xvfb]\n\
+command=Xvfb :0 -screen 0 1280x720x16\n\
+environment=DISPLAY=\":0\"\n\
+autostart=true\n\
+autorestart=true\n\
+\n\
+[program:x11vnc]\n\
+command=x11vnc -display :0 -nopw -forever -shared\n\
+autostart=true\n\
+autorestart=true\n\
+\n\
+[program:novnc]\n\
+command=/usr/bin/websockify --web=/opt/novnc 80 localhost:5900\n\
+autostart=true\n\
+autorestart=true\n\
+\n\
+[program:emulator]\n\
+command=/opt/android-sdk/emulator/emulator -avd test -noaudio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -netdelay none -netspeed full -verbose -qemu -m 2048\n\
+environment=DISPLAY=\":0\"\n\
+autostart=true\n\
+autorestart=true" > /etc/supervisor/conf.d/supervisord.conf
 
-[program:xvfb]
-command=/usr/bin/Xvfb :99 -screen 0 1280x720x16
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/xvfb.log
-stderr_logfile=/var/log/xvfb.err
+# 5. Expor porta HTTP para noVNC
+EXPOSE 80
 
-[program:x11vnc]
-command=/usr/bin/x11vnc -display :99 -nopw -forever -shared
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/x11vnc.log
-stderr_logfile=/var/log/x11vnc.err
-
-[program:android]
-command=/opt/docker-android/entrypoint.sh
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/android.log
-stderr_logfile=/var/log/android.err
-
-[program:novnc]
-command=/usr/local/bin/websockify --web=/opt/docker-android/utils/novnc 6080 localhost:5900
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/novnc.log
-stderr_logfile=/var/log/novnc.err
-EOF
-
-# Expõe as portas padrão
-EXPOSE 6080 5900
-
-# Inicia o supervisord com o arquivo de configuração especificado
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# 6. Entrypoint
+CMD ["/usr/bin/supervisord", "-n"]
